@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -t . -v
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint install.sh
+        run: |
+          bash -n install.sh
+          shellcheck --severity=warning install.sh
+
+  install-e2e:
+    # Installs the real systemd service on a clean Ubuntu runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install (offline verification, fake token)
+        run: |
+          sudo bash install.sh --non-interactive --skip-verify --local-source "$PWD" \
+            --token 123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --admin 1001 --lang en
+      - name: Service runs as the unprivileged user
+        run: |
+          sleep 3
+          systemctl is-active privatechecker
+          pid="$(systemctl show -p MainPID --value privatechecker)"
+          test "$(ps -o user:32= -p "$pid" | tr -d ' ')" = "privatechecker"
+          # the state directory is 0700, so root has to look inside it
+          test "$(sudo stat -c '%a %U' /var/lib/privatechecker/config.json)" = "600 privatechecker"
+          test "$(sudo stat -c '%a %U' /var/lib/privatechecker)" = "700 privatechecker"
+          test "$(stat -c '%a %U' /opt/privatechecker)" = "755 root"
+      - name: Token never appears in the logs
+        run: |
+          logs="$(sudo journalctl -u privatechecker --no-pager)"
+          echo "$logs" | tail -n 15
+          if echo "$logs" | grep -q "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; then
+            echo "token leaked into the logs"; exit 1
+          fi
+      - name: CLI works
+        run: |
+          privatechecker version
+          for section in system memory disk network processes services; do
+            sudo privatechecker report --only "$section"
+          done
+      - name: Update keeps the settings
+        run: |
+          sudo privatechecker update --non-interactive --skip-verify --local-source "$PWD"
+          sleep 3
+          systemctl is-active privatechecker
+          sudo grep -q '"owner_id": 1001' /var/lib/privatechecker/config.json
+      - name: Uninstall with purge
+        run: |
+          sudo privatechecker uninstall --purge
+          if systemctl is-active --quiet privatechecker; then echo "still running"; exit 1; fi
+          test ! -e /opt/privatechecker
+          test ! -e /var/lib/privatechecker
+          if id privatechecker; then echo "user not removed"; exit 1; fi

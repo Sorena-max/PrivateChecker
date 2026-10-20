@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Never commit real secrets
+.env
+*.env
+config.json
+state.json
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
