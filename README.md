@@ -57,7 +57,7 @@ To install a fixed release instead of `main`, add `--ref v0.1.0`.
 | Watched services | systemd units that are reported and alerted on, such as `nginx` or `x-ui` |
 | Users (owner only) | Add or remove people who may use this bot |
 | Language | Persian or English |
-| 🧰 PrivateToolBox (owner only) | Harden and tune the server from the bot, if [PrivateToolBox](https://github.com/Sorena-max/PrivateToolBox) is installed. Enable it with `sudo privatetoolbox integrate` |
+| 🧰 PrivateToolBox (owner only) | Harden and tune the server from the bot with [PrivateToolBox](https://github.com/Sorena-max/PrivateToolBox). The button is always there: if PrivateToolBox is not installed yet it offers to install it for you |
 
 Commands: `/start`, `/report`, `/help`, `/cancel`.
 
@@ -69,6 +69,23 @@ Iran check. The first lines tell you at a glance whether all is well, with warni
 Alerts are checked every minute. A problem must last a few checks before you hear about it (CPU 3 minutes,
 RAM and services 2, disk at once), you are reminded at most once an hour, and you get a message when it clears.
 The Iran check runs every 15 minutes.
+
+### Installing PrivateToolBox from the bot
+
+Tap 🧰 PrivateToolBox. If it is not installed, the bot says so and offers **Install**. After you confirm, a small
+root helper downloads the pinned PrivateToolBox release from GitHub, installs it and connects it to the bot
+(the bot restarts once and tells you when it is ready). Your server settings do not change until you pick a profile.
+
+This needs the helper, which is **off by default**. Turn it on when you install (the installer asks), or any time:
+
+```bash
+sudo privatechecker enable-install     # let the owner install PrivateToolBox from the bot
+sudo privatechecker disable-install    # turn it off again
+```
+
+The helper has two jobs only (install the pinned release, connect it to the bot), takes no arguments from the bot,
+and its socket can only be opened by root and the `privatechecker` user. Without the helper the button shows
+the commands to run by hand.
 
 ## From the server
 

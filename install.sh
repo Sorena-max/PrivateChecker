@@ -9,13 +9,15 @@
 
 set -Eeuo pipefail
 
-SC_VERSION="0.2.0"
+SC_VERSION="0.3.0"
 REPO_SLUG="Sorena-max/PrivateChecker"
 APP_DIR="/opt/privatechecker"
 STATE_DIR="/var/lib/privatechecker"
 SVC_USER="privatechecker"
 UNIT_FILE="/etc/systemd/system/privatechecker.service"
 BIN_FILE="/usr/local/bin/privatechecker"
+HELPER_UNIT_NAME="privatechecker-helper"
+HELPER_UNIT_FILE="/etc/systemd/system/privatechecker-helper.service"
 MIN_PY="3.8"
 
 COMMAND="install"
@@ -27,6 +29,7 @@ LOCAL_SOURCE=""
 NON_INTERACTIVE=0
 SKIP_VERIFY=0
 WITH_DOCKER=0
+WITH_HELPER=0
 PURGE=0
 NO_CLEAR=0
 FAST=0
@@ -155,6 +158,7 @@ Options:
   --lang fa|en         bot language (default: fa)
   --ref REF            git branch or tag to install (default: main)
   --with-docker        let the service read Docker (adds it to the docker group)
+  --with-helper        let the owner install PrivateToolBox from the Telegram bot (adds a small root helper)
   --non-interactive    never prompt; fail if --token/--admin are missing
   --purge              with uninstall: also delete settings and the service user
   --no-clear           do not clear the screen at the start
@@ -170,7 +174,7 @@ EOF
 
 parse_args() {
   if [ $# -gt 0 ]; then
-    case "$1" in install|update|uninstall) COMMAND="$1"; shift ;; esac
+    case "$1" in install|update|uninstall|enable-install|disable-install) COMMAND="$1"; shift ;; esac
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -180,6 +184,7 @@ parse_args() {
       --ref) REF="${2:?--ref needs a value}"; shift 2 ;;
       --local-source) LOCAL_SOURCE="${2:?--local-source needs a value}"; shift 2 ;;
       --with-docker) WITH_DOCKER=1; shift ;;
+      --with-helper) WITH_HELPER=1; shift ;;
       --non-interactive|--yes|-y) NON_INTERACTIVE=1; shift ;;
       --skip-verify) SKIP_VERIFY=1; shift ;;
       --purge) PURGE=1; shift ;;
@@ -470,7 +475,7 @@ write_unit() {
   cat >"$UNIT_FILE" <<EOF
 [Unit]
 Description=PrivateChecker - Telegram watchdog for this server
-Documentation=https://github.com/$REPO_SLUG/tree/main/PrivateChecker
+Documentation=https://github.com/$REPO_SLUG
 After=network-online.target
 Wants=network-online.target
 
@@ -527,6 +532,7 @@ case "$cmd" in
   version)  PYTHONPATH="$APP" python3 -m privatechecker version ;;
   update)   root_only "$@"; exec bash "$APP/install.sh" update "$@" ;;
   uninstall) root_only "$@"; exec bash "$APP/install.sh" uninstall "$@" ;;
+  enable-install|disable-install) root_only "$@"; exec bash "$APP/install.sh" "$cmd" "$@" ;;
   *) cat <<'USAGE'
 Usage: privatechecker <command>
 
@@ -536,6 +542,8 @@ Usage: privatechecker <command>
   report [--only SECTION]   print a report here in the terminal
   doctor      diagnose the installation
   update      install the latest version (keeps your settings)
+  enable-install   let the owner install PrivateToolBox from the bot (small root helper)
+  disable-install  turn that off again
   uninstall   remove PrivateChecker (add --purge to delete settings too)
   version
 USAGE
@@ -543,6 +551,64 @@ USAGE
 esac
 EOF
   chmod 755 "$BIN_FILE"
+}
+
+write_helper_unit() {
+  local py; py="$(command -v python3)"
+  cat >"$HELPER_UNIT_FILE" <<EOF
+[Unit]
+Description=PrivateChecker helper (installs PrivateToolBox when the owner asks in the bot)
+Documentation=https://github.com/$REPO_SLUG
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=$APP_DIR PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ExecStart=$py -m privatechecker helper
+Restart=always
+RestartSec=5
+RuntimeDirectory=privatechecker
+RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 644 "$HELPER_UNIT_FILE"
+}
+
+enable_helper() {
+  write_helper_unit
+  systemctl daemon-reload
+  systemctl enable "$HELPER_UNIT_NAME" >/dev/null 2>&1
+  systemctl restart "$HELPER_UNIT_NAME"
+  for _ in 1 2 3 4 5; do
+    if [ -S /run/privatechecker/helper.sock ]; then break; fi
+    sleep 1
+  done
+  ok "The owner can now install PrivateToolBox from the bot ${C_DIM}(a small root helper, off switch: privatechecker disable-install)${C_OFF}"
+}
+
+disable_helper() {
+  systemctl disable --now "$HELPER_UNIT_NAME" >/dev/null 2>&1 || true
+  rm -f "$HELPER_UNIT_FILE"
+  systemctl daemon-reload 2>/dev/null || true
+}
+
+offer_helper() {
+  [ -f "$HELPER_UNIT_FILE" ] && return 0
+  if [ "$WITH_HELPER" -eq 1 ]; then enable_helper; return 0; fi
+  if [ "$NON_INTERACTIVE" -eq 1 ] || ! have_tty; then return 0; fi
+  printf "\n  %sInstall PrivateToolBox from the bot?%s\n" "$C_BLD" "$C_OFF"
+  info "PrivateToolBox hardens and tunes the server. With a small root helper, the bot owner can install it with one tap."
+  info "The helper can only install one pinned release from github.com/Sorena-max/PrivateToolBox, nothing else."
+  local answer
+  prompt answer "  Turn it on? [y/N] "
+  case "$answer" in
+    y|Y|yes|YES) enable_helper ;;
+    *) info "Skipped. Turn it on any time with: sudo privatechecker enable-install" ;;
+  esac
 }
 
 start_service() {
@@ -604,11 +670,30 @@ do_install() {
   step 5 5 "Starting"
   start_service
   finish_screen
+  if [ "$COMMAND" = "install" ]; then offer_helper; fi
+  if [ -f "$HELPER_UNIT_FILE" ]; then write_helper_unit; systemctl daemon-reload; systemctl restart "$HELPER_UNIT_NAME" || true; fi
+}
+
+do_enable_install() {
+  need_root; need_systemd
+  [ -d "$APP_DIR/privatechecker" ] || die "PrivateChecker is not installed here"
+  step 1 1 "Install PrivateToolBox from the bot"
+  enable_helper
+  printf "\n  Open your bot, tap PrivateToolBox, and choose Install.\n\n"
+}
+
+do_disable_install() {
+  need_root
+  step 1 1 "Turning off installing from the bot"
+  disable_helper
+  ok "Done. The bot can no longer install anything"
+  printf "\n"
 }
 
 do_uninstall() {
   need_root
   step 1 1 "Removing PrivateChecker"
+  disable_helper
   systemctl disable --now privatechecker >/dev/null 2>&1 || true
   rm -f "$UNIT_FILE" "$BIN_FILE"
   systemctl daemon-reload 2>/dev/null || true
@@ -629,6 +714,8 @@ main() {
   show_header
   case "$COMMAND" in
     install|update) do_install ;;
+    enable-install) do_enable_install ;;
+    disable-install) do_disable_install ;;
     uninstall) do_uninstall ;;
   esac
 }

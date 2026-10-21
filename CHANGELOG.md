@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- The 🧰 PrivateToolBox button is always shown to the owner. If PrivateToolBox is not installed, it offers to
+  install it; if it is installed but not connected, it offers to connect it
+- Optional root helper for that (`sudo privatechecker enable-install`, off by default): it can only download the
+  pinned PrivateToolBox release over HTTPS, install it and connect it, and takes no arguments from the bot.
+  Turn it off with `sudo privatechecker disable-install`
+- After the bot restarts during the install, the owner is told whether it worked
+
 ## 0.2.0
 
 - New 🧰 PrivateToolBox button in the panel for the owner, when

@@ -65,6 +65,37 @@ jobs:
           for section in system memory disk network processes services; do
             sudo privatechecker report --only "$section"
           done
+      - name: Install PrivateToolBox through the helper (real GitHub release)
+        run: |
+          sudo privatechecker enable-install
+          systemctl is-active privatechecker-helper
+          test -S /run/privatechecker/helper.sock
+          sudo env PYTHONPATH=/opt/privatechecker PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+          import sys
+          from privatechecker import toolbox
+          reply = toolbox.helper_call("install_toolbox", timeout=900)
+          print(reply.get("output", reply))
+          sys.exit(0 if reply.get("ok") else 1)
+          PY
+          test -x /usr/local/bin/privatetoolbox
+          systemctl is-active privatetoolbox-agent
+          sleep 5
+          systemctl is-active privatechecker
+          id -nG privatechecker | tr ' ' '\n' | grep -qx privatetoolbox
+      - name: The bot user can reach PrivateToolBox, nobody else can
+        run: |
+          call='from privatechecker import toolbox; import sys; r = toolbox.call({"cmd": sys.argv[1], "lang": "en"}, timeout=300); print(r); sys.exit(0 if r.get("ok") else 1)'
+          sudo -u privatechecker env PYTHONPATH=/opt/privatechecker PYTHONDONTWRITEBYTECODE=1 python3 -c "$call" ping
+          sudo -u privatechecker env PYTHONPATH=/opt/privatechecker PYTHONDONTWRITEBYTECODE=1 python3 -c "$call" scan | grep -q "Score"
+          if sudo -u nobody env PYTHONPATH=/opt/privatechecker PYTHONDONTWRITEBYTECODE=1 python3 -c "$call" ping; then
+            echo "an unrelated user reached the agent"; exit 1
+          fi
+          # a request that tries to smuggle in an option is refused
+          sudo -u privatechecker env PYTHONPATH=/opt/privatechecker PYTHONDONTWRITEBYTECODE=1 python3 -c '
+          from privatechecker import toolbox
+          r = toolbox.call({"cmd": "apply", "profile": "vpn", "opts": {"dns": "--help"}})
+          print(r)
+          raise SystemExit(0 if r.get("ok") is False else 1)'
       - name: Update keeps the settings
         run: |
           sudo privatechecker update --non-interactive --skip-verify --local-source "$PWD"
@@ -73,6 +104,8 @@ jobs:
           sudo grep -q '"owner_id": 1001' /var/lib/privatechecker/config.json
       - name: Uninstall with purge
         run: |
+          sudo privatetoolbox integrate --remove
+          sudo privatetoolbox uninstall --purge
           sudo privatechecker uninstall --purge
           if systemctl is-active --quiet privatechecker; then echo "still running"; exit 1; fi
           test ! -e /opt/privatechecker

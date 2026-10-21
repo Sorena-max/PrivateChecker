@@ -54,9 +54,9 @@ class ButtonVisibilityTests(ToolboxTestCase):
         self.setUp(users=[FRIEND])
         self.assertNotIn("tb:menu", self.main_buttons(FRIEND))
 
-    def test_hidden_when_toolbox_is_not_set_up(self):
+    def test_still_shown_to_the_owner_when_toolbox_is_not_set_up(self):
         with mock.patch.object(toolbox, "available", return_value=False):
-            self.assertNotIn("tb:menu", self.main_buttons(OWNER))
+            self.assertIn("tb:menu", self.main_buttons(OWNER))
 
 
 class OwnerOnlyTests(ToolboxTestCase):
@@ -71,9 +71,10 @@ class OwnerOnlyTests(ToolboxTestCase):
         self.send(callback(9999, "tb:do:vpn"))
         self.assertEqual(self.agent.requests, [])
 
-    def test_unavailable_bridge_is_explained(self):
+    def test_commands_need_the_bridge(self):
         with mock.patch.object(toolbox, "available", return_value=False):
             self.send(callback(OWNER, "tb:scan"))
+            self.send(callback(OWNER, "tb:do:vpn"))
         self.assertEqual(self.agent.requests, [])
         self.assertIn("integrate", self.tg.answers[-1][1])
 
@@ -173,6 +174,118 @@ class ApplyFlowTests(ToolboxTestCase):
     def test_apply_has_a_long_timeout(self):
         self.send(callback(OWNER, "tb:do:vpn"))
         self.assertGreaterEqual(self.agent.requests[0][1], 600)
+
+class FakeHelper:
+    def __init__(self, reply=None):
+        self.calls = []
+        self.reply = reply or {"ok": True, "output": "Installed"}
+
+    def call(self, cmd, timeout=900):
+        self.calls.append((cmd, timeout))
+        return self.reply
+
+
+class SetupTestCase(ToolboxTestCase):
+    """PrivateToolBox missing or not connected."""
+
+    def configure(self, installed=False, helper_on=True, reply=None):
+        self.helper = FakeHelper(reply)
+        for patcher in (mock.patch.object(toolbox, "available", return_value=False),
+                        mock.patch.object(toolbox, "installed", return_value=installed),
+                        mock.patch.object(toolbox, "helper_available", return_value=helper_on),
+                        mock.patch.object(toolbox, "helper_call", self.helper.call)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+
+class NotInstalledTests(SetupTestCase):
+    def test_tapping_the_button_offers_to_install(self):
+        self.configure()
+        self.send(callback(OWNER, "tb:menu"))
+        self.assertIn("not installed", self.texts()[0])
+        self.assertEqual(self.buttons(), ["tb:install", "m:main"])
+        self.assertEqual(self.helper.calls, [])
+
+    def test_install_asks_before_doing_anything(self):
+        self.configure()
+        self.send(callback(OWNER, "tb:install"))
+        self.assertEqual(self.helper.calls, [])
+        self.assertIn(botmod.helper.TOOLBOX_REF, self.texts()[0])
+        self.assertIn("as root", self.texts()[0])
+        self.assertEqual(self.buttons(), ["tb:install:yes", "m:main"])
+
+    def test_confirming_runs_the_helper(self):
+        self.configure()
+        self.send(callback(OWNER, "tb:install:yes"))
+        self.assertEqual([c[0] for c in self.helper.calls], ["install_toolbox"])
+        self.assertIn("ready", self.texts()[-1])
+
+    def test_a_failed_install_is_reported(self):
+        self.configure(reply={"ok": False, "output": "download failed"})
+        self.send(callback(OWNER, "tb:install:yes"))
+        self.assertIn("download failed", " ".join(self.texts()))
+        self.assertIn("did not finish", self.texts()[-1])
+
+    def test_the_pending_flag_is_cleared_after_the_job(self):
+        self.configure()
+        self.send(callback(OWNER, "tb:install:yes"))
+        self.assertFalse(self.state.snapshot()["toolbox_pending"])
+
+    def test_without_the_helper_it_explains_how_to_install_by_hand(self):
+        self.configure(helper_on=False)
+        self.send(callback(OWNER, "tb:menu"))
+        self.assertIn("install.sh", self.texts()[0])
+        self.assertIn("enable-install", self.texts()[0])
+        self.assertEqual(self.buttons(), [])
+        self.send(callback(OWNER, "tb:install:yes"))
+        self.assertEqual(self.helper.calls, [])
+
+    def test_viewers_cannot_trigger_an_install(self):
+        self.setUp(users=[FRIEND])
+        self.configure()
+        for data in ("tb:menu", "tb:install", "tb:install:yes", "tb:enable"):
+            self.send(callback(FRIEND, data))
+        self.assertEqual(self.helper.calls, [])
+        self.assertEqual(self.tg.sent, [])
+
+
+class InstalledButNotConnectedTests(SetupTestCase):
+    def test_offers_to_connect(self):
+        self.configure(installed=True)
+        self.send(callback(OWNER, "tb:menu"))
+        self.assertIn("not connected", self.texts()[0])
+        self.assertEqual(self.buttons(), ["tb:enable", "m:main"])
+
+    def test_connecting_runs_only_the_bridge_step(self):
+        self.configure(installed=True)
+        self.send(callback(OWNER, "tb:enable"))
+        self.assertEqual([c[0] for c in self.helper.calls], ["enable_bridge"])
+
+    def test_manual_hint_without_the_helper(self):
+        self.configure(installed=True, helper_on=False)
+        self.send(callback(OWNER, "tb:menu"))
+        self.assertIn("privatetoolbox integrate", self.texts()[0])
+
+
+class RestartFollowUpTests(SetupTestCase):
+    def test_after_the_restart_the_owner_hears_how_it_went(self):
+        self.configure()
+        self.state.update(lambda d: d.__setitem__("toolbox_pending", 123.0))
+        with mock.patch.object(toolbox, "available", return_value=True):
+            self.bot.startup()
+        self.assertTrue(any("ready" in t for t in self.texts()))
+        self.assertFalse(self.state.snapshot()["toolbox_pending"])
+
+    def test_a_failed_install_is_reported_after_the_restart(self):
+        self.configure()
+        self.state.update(lambda d: d.__setitem__("toolbox_pending", 123.0))
+        self.bot.startup()
+        self.assertTrue(any("did not finish" in t for t in self.texts()))
+
+    def test_nothing_extra_on_a_normal_start(self):
+        self.configure()
+        self.bot.startup()
+        self.assertFalse(any("PrivateToolBox is ready" in t for t in self.texts()))
 
 
 class ClientTests(unittest.TestCase):

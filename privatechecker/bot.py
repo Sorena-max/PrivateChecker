@@ -9,7 +9,7 @@ import re
 import threading
 import time
 
-from . import collectors, config, render, toolbox
+from . import collectors, config, helper, render, toolbox
 from .alerts import Alerts
 from .config import (INTERVAL_PRESETS, LANGUAGES, MAX_INTERVAL, MIN_INTERVAL,
                      SECTIONS, SERVICE_RE)
@@ -127,7 +127,7 @@ class Bot:
         if uid == cfg["owner_id"]:
             row.append(button(t(lang, "btn_users"), "us:menu"))
         rows.append(row)
-        if uid == cfg["owner_id"] and toolbox.available():
+        if uid == cfg["owner_id"]:
             rows.append([button(t(lang, "btn_toolbox"), "tb:menu")])
         rows.append([button(t(lang, "btn_lang"), "lg:menu")])
         return text, keyboard(rows)
@@ -513,17 +513,20 @@ class Bot:
             self._answer(cq["id"])
 
     def _on_toolbox(self, cq, data, uid, owner, show):
-        """The PrivateToolBox button. Owner only, and only while the local agent exists."""
+        """The PrivateToolBox button. Owner only. Without PrivateToolBox it offers to set it up."""
         lang = self.lang
         if not owner:
             self._answer(cq["id"], t(lang, "owner_only"))
             return
-        if not toolbox.available():
-            self._answer(cq["id"], t(lang, "tb_unavailable"))
-            return
         parts = data.split(":")
         action = parts[1] if len(parts) > 1 else ""
         arg = parts[2] if len(parts) > 2 else ""
+        if not toolbox.available():
+            if action in ("menu", "install", "enable"):
+                self._toolbox_setup(cq, uid, action, arg)
+            else:
+                self._answer(cq["id"], t(lang, "tb_unavailable"))
+            return
         simple = {"scan": {"cmd": "scan"}, "verify": {"cmd": "verify"},
                   "iran": {"cmd": "verify", "iran": True}, "hist": {"cmd": "history"},
                   "keep": {"cmd": "confirm"}}
@@ -549,6 +552,58 @@ class Bot:
                 button(t(lang, "tb_cancel"), "tb:menu")]]))
         else:
             self._answer(cq["id"])
+
+    def _toolbox_setup(self, cq, uid, action, arg):
+        """PrivateToolBox is missing or not connected: explain, and offer to fix it if allowed."""
+        lang = self.lang
+        can_install = toolbox.helper_available()
+        have_program = toolbox.installed()
+        self._answer(cq["id"])
+        if action == "menu":
+            if have_program:
+                text, button_data, label = (t(lang, "tb_installed_no_bridge"), "tb:enable", "tb_enable_btn")
+                manual = t(lang, "tb_manual_enable")
+            else:
+                text, button_data, label = (t(lang, "tb_not_installed"), "tb:install", "tb_install_btn")
+                manual = t(lang, "tb_manual_install")
+            if can_install:
+                self._send(uid, text, keyboard([[button(t(lang, label), button_data),
+                                                 button(t(lang, "tb_cancel"), "m:main")]]))
+            else:
+                self._send(uid, text + "\n\n" + manual)
+        elif not can_install:
+            self._send(uid, t(lang, "tb_manual_install" if not have_program else "tb_manual_enable"))
+        elif action == "install" and arg != "yes":
+            self._send(uid, t(lang, "tb_install_ask", ref=helper.TOOLBOX_REF), keyboard([[
+                button(t(lang, "tb_install_yes"), "tb:install:yes"),
+                button(t(lang, "tb_cancel"), "m:main")]]))
+        elif action in ("install", "enable"):
+            cmd = "install_toolbox" if action == "install" else "enable_bridge"
+            self._async(uid, lambda: self._toolbox_setup_job(uid, cmd))
+
+    def _toolbox_setup_job(self, uid, cmd):
+        """Run the root helper. The bot restarts itself near the end, so the result
+        may only be reported after the restart (see _toolbox_followup)."""
+        lang = self.lang
+        self.state.update(lambda d: d.__setitem__("toolbox_pending", time.time()))
+        self._send(uid, t(lang, "tb_installing"))
+        reply = toolbox.helper_call(cmd, timeout=900)
+        self.state.update(lambda d: d.__setitem__("toolbox_pending", 0.0))
+        if reply.get("error") == "busy":
+            self._send(uid, t(lang, "tb_busy"))
+            return
+        output = (reply.get("output") or reply.get("error") or "").strip()
+        for part in self._toolbox_chunks(output):
+            self._send(uid, "<pre>%s</pre>" % render.esc(part))
+        self._send(uid, t(lang, "tb_ready" if reply.get("ok") else "tb_not_ready"))
+
+    def _toolbox_followup(self, owner):
+        """After a restart caused by installing PrivateToolBox, tell the owner how it went."""
+        if not self.state.snapshot().get("toolbox_pending"):
+            return
+        self.state.update(lambda d: d.__setitem__("toolbox_pending", 0.0))
+        key = "tb_ready" if toolbox.available() else "tb_not_ready"
+        self._send(owner, t(self.lang, key))
 
     def _toolbox_start(self, cq, uid, request):
         lang = self.lang
@@ -671,6 +726,7 @@ class Bot:
         owner = self.snap()["owner_id"]
         self._send(owner, t(lang, "started", host=render.esc(self.host()),
                             footer=t(lang, "footer")))
+        self._toolbox_followup(owner)
 
     def run(self):
         self.startup()

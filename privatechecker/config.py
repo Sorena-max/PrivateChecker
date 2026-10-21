@@ -186,7 +186,7 @@ def open_config(path=None):
 
 def open_state(path=None):
     return JsonStore(path or os.path.join(home_dir(), "state.json"),
-                     {"last_report_ts": 0.0})
+                     {"last_report_ts": 0.0, "toolbox_pending": 0.0})
 
 
 def is_authorized(cfg, user_id):

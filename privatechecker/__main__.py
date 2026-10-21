@@ -39,6 +39,12 @@ def cmd_run(_args):
         pass
 
 
+def cmd_helper(_args):
+    """The root helper behind `privatechecker enable-install` (see helper.py)."""
+    from . import helper
+    helper.serve()
+
+
 def cmd_init(_args):
     token = os.environ.get("SC_TOKEN", "").strip()
     owner = os.environ.get("SC_OWNER", "").strip()
@@ -118,13 +124,14 @@ def main(argv=None):
     rep = sub.add_parser("report", help="print a report to the terminal")
     rep.add_argument("--only", help="a single section: %s" % ", ".join(SECTIONS))
     sub.add_parser("doctor", help="diagnose the installation")
+    sub.add_parser("helper", help=argparse.SUPPRESS)
     sub.add_parser("version", help="print the version")
     args = parser.parse_args(argv)
     if args.command == "version":
         print(__version__)
         return
     {"run": cmd_run, "init": cmd_init, "report": cmd_report,
-     "doctor": cmd_doctor}[args.command](args)
+     "doctor": cmd_doctor, "helper": cmd_helper}[args.command](args)
 
 
 if __name__ == "__main__":
