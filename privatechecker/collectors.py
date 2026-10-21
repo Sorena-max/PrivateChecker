@@ -417,7 +417,7 @@ class Collector:
             return {"target": None, "nodes": [], "error": "no-target"}
         return self.iran.check(target, cfg_iran.get("tcp_ports", []), force=force)
 
-    def collect(self, cfg, only=None):
+    def collect(self, cfg, only=None, fresh=False):
         """Collect the sections enabled in cfg (or exactly only)."""
         wanted = [only] if only else [s for s, on in cfg["sections"].items() if on]
         # The Iran check can take a minute (rate-limit retries). Run it beside the
@@ -427,7 +427,7 @@ class Collector:
         if "iran" in wanted:
             def run_iran():
                 ip = None if cfg["iran"].get("target") else self.public_ip()
-                iran_job["data"] = self.iran_check(cfg["iran"], ip)
+                iran_job["data"] = self.iran_check(cfg["iran"], ip, force=fresh)
             iran_thread = threading.Thread(target=run_iran, daemon=True)
             iran_thread.start()
 

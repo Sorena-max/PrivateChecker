@@ -15,7 +15,8 @@ API = "https://check-host.net"
 FALLBACK_NODES = ("ir1.node.check-host.net", "ir3.node.check-host.net")
 MAX_NODES = 5
 MAX_PORTS = 3
-RESULT_TTL = 120        # seconds a finished check is reused
+RESULT_TTL = 120        # seconds a complete check is reused (scheduled reports and alerts)
+WAIT = 40               # seconds to wait for the Iranian probes to answer
 NODES_TTL = 6 * 3600
 BACKOFF = 600           # seconds to stay quiet after the API says "limit exceeded"
 START_TRIES = 3         # starting a check is rate limited per IP: retry politely
@@ -143,8 +144,13 @@ class IranChecker:
                     time.time() >= deadline:
                 return results
 
-    def check(self, host, ports=(), wait=25, force=False):
-        """Return a dict describing reachability of host from Iran."""
+    def check(self, host, ports=(), wait=WAIT, force=False):
+        """Return a dict describing reachability of host from Iran.
+
+        force=True is for a person who just asked: it always runs a fresh test (and
+        tries even during the quiet period after a rate limit). Only complete results
+        are cached, so a half-finished test is never shown again.
+        """
         ports = [p for p in list(ports)[:MAX_PORTS]]
         key = (host, tuple(ports))
         with self._lock:
@@ -152,7 +158,7 @@ class IranChecker:
                     and time.time() - self._last_ts < RESULT_TTL):
                 return self._last
             report = {"target": host, "nodes": [], "error": None, "ts": time.time()}
-            if time.time() < self._blocked_until:
+            if not force and time.time() < self._blocked_until:
                 report["error"] = "limit_exceeded"
                 return report
             try:
@@ -169,7 +175,11 @@ class IranChecker:
                 report["error"] = str(exc)
                 if "limit" in report["error"]:
                     self._blocked_until = time.time() + BACKOFF
-            self._last, self._last_key, self._last_ts = report, key, time.time()
+            complete = not report["error"] and all(n["ping"] is not None for n in report["nodes"])
+            if complete:
+                self._last, self._last_key, self._last_ts = report, key, time.time()
+            else:
+                self._last = None
             return report
 
 

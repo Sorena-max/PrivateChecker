@@ -87,10 +87,11 @@ class Bot:
             for message in pack(parts):
                 self._send(chat_id, message)
 
-    def send_report(self, chat_ids=None, only=None):
+    def send_report(self, chat_ids=None, only=None, fresh=False):
+        """fresh=True is for something a person just asked for: run a new Iran test now."""
         cfg = self.snap()
         lang = cfg["language"]
-        data = self.col.collect(cfg, only=only)
+        data = self.col.collect(cfg, only=only, fresh=fresh)
         if only:
             parts = [render.build_section(only, data, cfg, lang)]
         else:
@@ -343,7 +344,7 @@ class Bot:
             self._send(uid, body, markup)
         elif word == "/report":
             self.pending.pop(uid, None)
-            self._async(uid, lambda: self.send_report([uid]))
+            self._async(uid, lambda: self.send_report([uid], fresh=True))
         elif word == "/help":
             self._send(uid, t(lang, "help"))
         elif word == "/cancel":
@@ -424,7 +425,7 @@ class Bot:
                 only = data[2:]
             elif data == "ir:now":
                 only = "iran"
-            if self._async(uid, lambda: self.send_report([uid], only=only)):
+            if self._async(uid, lambda: self.send_report([uid], only=only, fresh=True)):
                 self._answer(cq["id"], t(lang, "collecting"))
             else:
                 self._answer(cq["id"], t(lang, "rate_limited"))

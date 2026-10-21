@@ -23,7 +23,7 @@ import threading
 import urllib.request
 
 TOOLBOX_REPO = "Sorena-max/PrivateToolBox"
-TOOLBOX_REF = "v0.1.1"
+TOOLBOX_REF = "v0.1.0"
 TOOLBOX_BIN = "/usr/local/bin/privatetoolbox"
 SOCKET = "/run/privatechecker/helper.sock"
 GROUP = "privatechecker"

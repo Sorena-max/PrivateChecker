@@ -83,9 +83,11 @@ class FakeCollector:
     def __init__(self, data=None):
         self.data = data or sample_data()
         self.collect_calls = []
+        self.fresh_calls = []
 
-    def collect(self, cfg, only=None):
+    def collect(self, cfg, only=None, fresh=False):
         self.collect_calls.append(only)
+        self.fresh_calls.append(fresh)
         return {only: self.data[only]} if only else dict(self.data)
 
     def memory(self):

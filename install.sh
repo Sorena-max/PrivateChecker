@@ -9,7 +9,7 @@
 
 set -Eeuo pipefail
 
-SC_VERSION="0.3.0"
+SC_VERSION="0.1.0"
 REPO_SLUG="Sorena-max/PrivateChecker"
 APP_DIR="/opt/privatechecker"
 STATE_DIR="/var/lib/privatechecker"

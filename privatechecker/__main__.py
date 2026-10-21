@@ -73,7 +73,7 @@ def cmd_report(args):
     collector = collectors.Collector(IranChecker())
     if args.only and args.only not in SECTIONS:
         sys.exit("unknown section; choose from: %s" % ", ".join(SECTIONS))
-    collected = collector.collect(data, only=args.only)
+    collected = collector.collect(data, only=args.only, fresh=True)
     if args.only:
         parts = [render.build_section(args.only, collected, data, data["language"])]
     else:

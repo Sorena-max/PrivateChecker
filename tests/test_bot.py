@@ -114,6 +114,17 @@ class ReportTests(BotTestCase):
         self.assertEqual(self.col.collect_calls, ["iran"])
         self.assertIn("Iran", self.tg.sent[0][1])
 
+    def test_a_tap_runs_a_fresh_test_but_the_schedule_may_reuse_one(self):
+        self.send(callback(OWNER, "ir:now"))
+        self.send(callback(OWNER, "s:iran"))
+        self.send(callback(OWNER, "r:full"))
+        self.send(message(OWNER, "/report"))
+        self.assertEqual(self.col.fresh_calls, [True, True, True, True])
+        self.col.fresh_calls.clear()
+        self.bot.scheduler_tick(1000.0)
+        self.bot.scheduler_tick(1000.0 + 31 * 60)
+        self.assertEqual(self.col.fresh_calls, [False])
+
     def test_unknown_section_is_ignored(self):
         self.send(callback(OWNER, "s:bogus"))
         self.assertEqual(self.col.collect_calls, [])

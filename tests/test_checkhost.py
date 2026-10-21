@@ -129,10 +129,55 @@ class FlowTests(unittest.TestCase):
             checker = checkhost.IranChecker(sleep=lambda _s: None)
             first = checker.check("203.0.113.5", [])
             made = len(calls)
-            second = checker.check("203.0.113.5", [], force=True)
+            second = checker.check("203.0.113.5", [])
         self.assertIn("limit", first["error"])
         self.assertIn("limit", second["error"])
         self.assertEqual(len(calls), made)  # no request while backing off
+
+    def test_incomplete_results_are_never_reused(self):
+        pending = {"ir1.node.check-host.net": None, "ir3.node.check-host.net": [[["OK", 0.04, "x"]] * 4]}
+        calls = []
+
+        def get(path, timeout=15):
+            calls.append(path)
+            if path == "/check-result/p1":
+                return pending
+            return self.fake_get(path, timeout)
+        with mock.patch.object(checkhost, "_get", get):
+            checker = checkhost.IranChecker(sleep=lambda _s: None)
+            first = checker.check("203.0.113.5", [], wait=0)
+            self.assertIsNone(first["nodes"][0]["ping"])           # still pending: shown as no answer
+            started = len([c for c in calls if c.startswith("/check-ping")])
+            checker.check("203.0.113.5", [], wait=0)               # the next call must test again
+            self.assertEqual(len([c for c in calls if c.startswith("/check-ping")]), started + 1)
+
+    def test_a_person_asking_always_gets_a_fresh_test(self):
+        calls = []
+
+        def counting(path, timeout=15):
+            calls.append(path)
+            return self.fake_get(path, timeout)
+        with mock.patch.object(checkhost, "_get", counting):
+            checker = checkhost.IranChecker(sleep=lambda _s: None)
+            checker.check("203.0.113.5", [])
+            checker.check("203.0.113.5", [])                       # scheduled: served from the cache
+            self.assertEqual(len([c for c in calls if c.startswith("/check-ping")]), 1)
+            checker.check("203.0.113.5", [], force=True)           # asked by a person: new test
+            self.assertEqual(len([c for c in calls if c.startswith("/check-ping")]), 2)
+
+    def test_asking_by_hand_tries_even_during_the_quiet_period(self):
+        state = {"limited": True}
+
+        def get(path, timeout=15):
+            if path.startswith("/check-ping") and state["limited"]:
+                raise checkhost.CheckHostError("limit_exceeded")
+            return self.fake_get(path, timeout)
+        with mock.patch.object(checkhost, "_get", get):
+            checker = checkhost.IranChecker(sleep=lambda _s: None)
+            self.assertIn("limit", checker.check("203.0.113.5", [])["error"])
+            state["limited"] = False
+            self.assertIn("limit", checker.check("203.0.113.5", [])["error"])          # scheduled: waits
+            self.assertIsNone(checker.check("203.0.113.5", [], force=True)["error"])   # person: tries again
 
     def test_api_failure_is_reported_not_raised(self):
         def boom(path, timeout=15):
