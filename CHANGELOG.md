@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- New 🧰 PrivateToolBox button in the panel for the owner, when
+  [PrivateToolBox](https://github.com/Sorena-max/PrivateToolBox) is installed and its bridge is enabled
+  (`sudo privatetoolbox integrate`): scan, verify (with Iran), history, preview and apply a profile,
+  keep or undo changes
+- Applying from the bot always waits for a Keep tap and undoes itself if you do not
+- Viewers added by the owner never see or use the button
+
 ## 0.1.0
 
 First release.

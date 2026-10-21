@@ -58,6 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/Sorena-max/PrivateChecker/main/inst
 | سرویس های تحت نظر | یونیت های systemd که گزارش و هشدار میگیرند، مثل `nginx` یا `x-ui` |
 | کاربران (فقط مالک) | افزودن و حذف افرادی که اجازهی استفاده دارند |
 | زبان | فارسی یا انگلیسی |
+| 🧰 PrivateToolBox (فقط مالک) | سخت سازی و بهینه سازی سرور از داخل ربات، اگر [PrivateToolBox](https://github.com/Sorena-max/PrivateToolBox) نصب باشد. با `sudo privatetoolbox integrate` فعالش کن |
 
 دستورها: `/start` و `/report` و `/help` و `/cancel`.
 

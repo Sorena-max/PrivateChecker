@@ -46,6 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/Sorena-max/PrivateChecker/main/inst
 | 🇮🇷 چک ایران | آیا از ایران به سرور میرسند؟ |
 | ⚙️ سرویس های تحت نظر | اگر `nginx` یا `x-ui` و ... بایستد خبر میگیری |
 | 👥 کاربران | به یک دوستت هم اجازه بده از ربات استفاده کند (فقط مالک) |
+| 🧰 PrivateToolBox | از همین جا سرور را امن و بهینه کن (فقط مالک، نیاز به [PrivateToolBox](https://github.com/Sorena-max/PrivateToolBox)) |
 | 🌐 زبان | فارسی یا انگلیسی |
 
 ## ✅ کارهای رایج

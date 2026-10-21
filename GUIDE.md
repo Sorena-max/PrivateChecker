@@ -44,6 +44,7 @@ When it says **installed and running**, open your bot and send `/start`. 🎉
 | 🇮🇷 Iran check | can people in Iran reach your server? |
 | ⚙️ Watched services | get warned if `nginx`, `x-ui` ... stop |
 | 👥 Users | let a friend use the bot too (owner only) |
+| 🧰 PrivateToolBox | secure and tune the server from here (owner only, needs [PrivateToolBox](https://github.com/Sorena-max/PrivateToolBox)) |
 | 🌐 Language | Persian or English |
 
 ## ✅ Common tasks

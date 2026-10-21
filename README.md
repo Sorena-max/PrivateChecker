@@ -57,6 +57,7 @@ To install a fixed release instead of `main`, add `--ref v0.1.0`.
 | Watched services | systemd units that are reported and alerted on, such as `nginx` or `x-ui` |
 | Users (owner only) | Add or remove people who may use this bot |
 | Language | Persian or English |
+| 🧰 PrivateToolBox (owner only) | Harden and tune the server from the bot, if [PrivateToolBox](https://github.com/Sorena-max/PrivateToolBox) is installed. Enable it with `sudo privatetoolbox integrate` |
 
 Commands: `/start`, `/report`, `/help`, `/cancel`.
 

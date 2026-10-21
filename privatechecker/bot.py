@@ -9,7 +9,7 @@ import re
 import threading
 import time
 
-from . import collectors, config, render
+from . import collectors, config, render, toolbox
 from .alerts import Alerts
 from .config import (INTERVAL_PRESETS, LANGUAGES, MAX_INTERVAL, MIN_INTERVAL,
                      SECTIONS, SERVICE_RE)
@@ -19,6 +19,11 @@ from .telegram_api import TelegramError, pack
 log = logging.getLogger("privatechecker")
 HOST_RE = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
 START_COMMANDS = {"/start", "/panel", "/menu"}
+TOOLBOX_PROFILES = ("recommended", "vpn", "web", "bot", "game")
+TOOLBOX_KEEP_SECONDS = 180
+TOOLBOX_TIMEOUT = {"scan": 150, "plan": 200, "apply": 900, "undo": 320, "confirm": 40,
+                   "history": 40, "verify": 260}
+TOOLBOX_CHUNK = 3000
 
 
 def button(text, data):
@@ -122,8 +127,25 @@ class Bot:
         if uid == cfg["owner_id"]:
             row.append(button(t(lang, "btn_users"), "us:menu"))
         rows.append(row)
+        if uid == cfg["owner_id"] and toolbox.available():
+            rows.append([button(t(lang, "btn_toolbox"), "tb:menu")])
         rows.append([button(t(lang, "btn_lang"), "lg:menu")])
         return text, keyboard(rows)
+
+    def panel_toolbox(self):
+        lang = self.lang
+        rows = [[button(t(lang, "tb_scan"), "tb:scan"), button(t(lang, "tb_verify"), "tb:verify")],
+                [button(t(lang, "tb_iran"), "tb:iran"), button(t(lang, "tb_history"), "tb:hist")],
+                [button(t(lang, "tb_apply"), "tb:profiles")],
+                [button(t(lang, "tb_keep"), "tb:keep"), button(t(lang, "tb_undo"), "tb:undo")],
+                [button(t(lang, "btn_back"), "m:main")]]
+        return t(lang, "tb_title"), keyboard(rows)
+
+    def panel_tb_profiles(self):
+        lang = self.lang
+        rows = chunk([button(name, "tb:plan:" + name) for name in TOOLBOX_PROFILES], 3)
+        rows.append([button(t(lang, "btn_back"), "tb:menu")])
+        return t(lang, "tb_profiles_title"), keyboard(rows)
 
     def panel_sections(self):
         cfg = self.snap()
@@ -222,7 +244,8 @@ class Bot:
         return {"sections": self.panel_sections, "interval": self.panel_interval,
                 "alerts": self.panel_alerts, "users": self.panel_users,
                 "services": self.panel_services, "iran": self.panel_iran,
-                "lang": self.panel_lang}[name]()
+                "lang": self.panel_lang, "toolbox": self.panel_toolbox,
+                "tbprofiles": self.panel_tb_profiles}[name]()
 
     def set_interval(self, minutes):
         def apply(d):
@@ -484,8 +507,98 @@ class Bot:
             self.cfg.update(lambda d: d.__setitem__("language", code))
             self._answer(cq["id"], t(code, "lang_set"))
             show("main")
+        elif data.startswith("tb:"):
+            self._on_toolbox(cq, data, uid, owner, show)
         else:
             self._answer(cq["id"])
+
+    def _on_toolbox(self, cq, data, uid, owner, show):
+        """The PrivateToolBox button. Owner only, and only while the local agent exists."""
+        lang = self.lang
+        if not owner:
+            self._answer(cq["id"], t(lang, "owner_only"))
+            return
+        if not toolbox.available():
+            self._answer(cq["id"], t(lang, "tb_unavailable"))
+            return
+        parts = data.split(":")
+        action = parts[1] if len(parts) > 1 else ""
+        arg = parts[2] if len(parts) > 2 else ""
+        simple = {"scan": {"cmd": "scan"}, "verify": {"cmd": "verify"},
+                  "iran": {"cmd": "verify", "iran": True}, "hist": {"cmd": "history"},
+                  "keep": {"cmd": "confirm"}}
+        if action == "menu":
+            self._answer(cq["id"])
+            show("toolbox")
+        elif action == "profiles":
+            self._answer(cq["id"])
+            show("tbprofiles")
+        elif action in simple:
+            self._toolbox_start(cq, uid, dict(simple[action]))
+        elif action == "plan" and arg in TOOLBOX_PROFILES:
+            self._toolbox_start(cq, uid, {"cmd": "plan", "profile": arg})
+        elif action == "do" and arg in TOOLBOX_PROFILES:
+            self._toolbox_start(cq, uid, {"cmd": "apply", "profile": arg,
+                                          "rollback": TOOLBOX_KEEP_SECONDS})
+        elif action == "undo" and arg == "yes":
+            self._toolbox_start(cq, uid, {"cmd": "undo"})
+        elif action == "undo":
+            self._answer(cq["id"])
+            self._send(uid, t(lang, "tb_undo_ask"), keyboard([[
+                button(t(lang, "tb_undo_yes"), "tb:undo:yes"),
+                button(t(lang, "tb_cancel"), "tb:menu")]]))
+        else:
+            self._answer(cq["id"])
+
+    def _toolbox_start(self, cq, uid, request):
+        lang = self.lang
+        request["lang"] = lang
+        if self._async(uid, lambda: self._toolbox_job(uid, request)):
+            self._answer(cq["id"], t(lang, "tb_working"))
+        else:
+            self._answer(cq["id"], t(lang, "rate_limited"))
+
+    @staticmethod
+    def _toolbox_chunks(text, size=TOOLBOX_CHUNK):
+        chunks, current = [], ""
+        for line in text.splitlines():
+            while len(line) > size:
+                if current:
+                    chunks.append(current)
+                    current = ""
+                chunks.append(line[:size])
+                line = line[size:]
+            if current and len(current) + len(line) + 1 > size:
+                chunks.append(current)
+                current = ""
+            current = (current + "\n" + line) if current else line
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def _toolbox_job(self, uid, request):
+        """Run one request on the agent and show the result (runs off the polling thread)."""
+        lang = request["lang"]
+        cmd = request["cmd"]
+        reply = toolbox.call(request, timeout=TOOLBOX_TIMEOUT.get(cmd, 300))
+        if reply.get("error") == "busy":
+            self._send(uid, t(lang, "tb_busy"))
+            return
+        output = (reply.get("output") or reply.get("error") or "").strip()
+        for part in self._toolbox_chunks(output) or [t(lang, "tb_empty")]:
+            self._send(uid, "<pre>%s</pre>" % render.esc(part))
+        if not reply.get("ok"):
+            self._send(uid, t(lang, "tb_failed", code=reply.get("code", "?")))
+            return
+        if cmd == "plan":
+            self._send(uid, t(lang, "tb_apply_ask", profile=render.esc(request["profile"]),
+                              seconds=TOOLBOX_KEEP_SECONDS), keyboard([[
+                button(t(lang, "tb_apply_btn"), "tb:do:" + request["profile"]),
+                button(t(lang, "tb_cancel"), "tb:menu")]]))
+        elif cmd == "apply" and reply.get("pending"):
+            self._send(uid, t(lang, "tb_pending", seconds=TOOLBOX_KEEP_SECONDS), keyboard([[
+                button(t(lang, "tb_keep_btn"), "tb:keep"),
+                button(t(lang, "tb_undo_btn"), "tb:undo:yes")]]))
 
     def _on_alert_button(self, cq, action, show):
         lang = self.lang
